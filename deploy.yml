@@ -1,0 +1,13 @@
+name: Deploy to Railway
+on: [push]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy to Railway
+        uses: railwayapp/action@v1
+        with:
+          serviceId: ${{ secrets.RAILWAY_SERVICE_ID }}
+          token: ${{ secrets.RAILWAY_TOKEN }}
