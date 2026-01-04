@@ -28,6 +28,7 @@ if not TOKEN:
 # --- Глобальные переменные ---
 user_histories = {}
 GROUP_TRIGGERS = ["секон", "бот", "ии", "нейросеть", "ai", "chatgpt"]
+bot_username = None  # Будет установлено после запуска
 
 async def get_ai_response(user_id: int, text: str) -> str:
     """Запрос к DeepSeek"""
@@ -64,17 +65,15 @@ async def get_ai_response(user_id: int, text: str) -> str:
                 history.append({"role": "assistant", "content": reply})
                 user_histories[user_id] = history[-6:]
                 return reply
-            else:
-                return "⚠️ Странный ответ от API"
-        else:
-            logger.error(f"API ошибка: {response.status_code} - {response.text}")
-            return f"⚠️ Ошибка {response.status_code}"
+        
+        logger.error(f"API ошибка: {response.status_code} - {response.text}")
+        return f"⚠️ Ошибка {response.status_code}"
             
     except Exception as e:
         logger.error(f"Ошибка подключения: {str(e)}")
         return "🔌 Проблемы с подключением"
 
-def should_respond(text: str, bot_username: str = "") -> bool:
+def should_respond(text: str, username: str = "") -> bool:
     """Определяем, нужно ли отвечать на сообщение"""
     if not text:
         return False
@@ -82,54 +81,46 @@ def should_respond(text: str, bot_username: str = "") -> bool:
     text_lower = text.lower().strip()
     
     # Если упоминание бота
-    if bot_username and f"@{bot_username}" in text_lower:
+    if username and f"@{username}" in text_lower:
         return True
     
-    # Проверяем триггерные слова в начале сообщения
-    # "секон, привет" или "секон привет"
+    # Проверяем триггерные слова
     for trigger in GROUP_TRIGGERS:
-        # Проверяем разные варианты
+        # Проверяем начало сообщения
         patterns = [
-            f"{trigger}, ",  # "секон, "
-            f"{trigger} ",   # "секон "
-            f"{trigger}\n",  # "секон\n"
-            f"{trigger}:"    # "секон:"
+            f"{trigger}, ",
+            f"{trigger} ",
+            f"{trigger}\n",
+            f"{trigger}:"
         ]
         
         for pattern in patterns:
             if text_lower.startswith(pattern):
                 return True
         
-        # Если слово просто где-то в тексте (более агрессивный режим)
+        # Если слово просто где-то в тексте
         if trigger in text_lower:
             return True
     
     return False
 
-async def clean_message_text(text: str, bot_username: str = "") -> str:
+def clean_message_text(text: str, username: str = "") -> str:
     """Очищаем текст от триггеров и упоминаний"""
-    text_lower = text.lower()
-    
-    # Убираем упоминание бота
-    if bot_username:
-        text = text.replace(f"@{bot_username}", "")
-        text = text.replace(f"@{bot_username.lower()}", "")
-        text = text.replace(f"@{bot_username.upper()}", "")
+    if username:
+        text = text.replace(f"@{username}", "")
     
     # Убираем триггеры в начале
+    text_lower = text.lower()
     for trigger in GROUP_TRIGGERS:
         patterns = [
             f"{trigger}, ",
             f"{trigger.capitalize()}, ",
             f"{trigger} ",
             f"{trigger.capitalize()} ",
-            f"{trigger}\n",
-            f"{trigger}:",
-            f"{trigger.capitalize()}:"
         ]
         
         for pattern in patterns:
-            if text.lower().startswith(pattern.lower()):
+            if text_lower.startswith(pattern.lower()):
                 text = text[len(pattern):]
                 break
     
@@ -166,6 +157,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Бот Секон работает\n"
         f"🤖 DeepSeek: {'✅' if DEEPSEEK_API_KEY else '❌'}\n"
         f"👤 Пользователей: {len(user_histories)}\n"
+        f"📝 Username: @{context.bot.username if context.bot.username else 'неизвестен'}\n"
         f"🕐 Время МСК: {(datetime.utcnow() + timedelta(hours=3)).strftime('%H:%M')}"
     )
     await update.message.reply_text(status_text)
@@ -190,7 +182,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = message.chat.type
     original_text = message.text.strip()
     
-    bot_username = context.bot.username if context.bot.username else ""
+    # Получаем username бота из контекста
+    username = context.bot.username if context.bot.username else ""
     
     # Определяем, нужно ли отвечать
     should_reply = False
@@ -201,14 +194,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cleaned_text = original_text
     else:
         # В группе проверяем условия
-        if should_respond(original_text, bot_username):
+        if should_respond(original_text, username):
             should_reply = True
         elif message.reply_to_message and message.reply_to_message.from_user.id == context.bot.id:
             # Ответ на сообщение бота
             should_reply = True
         
         # Очищаем текст от триггеров
-        cleaned_text = await clean_message_text(original_text, bot_username)
+        cleaned_text = clean_message_text(original_text, username)
     
     if not should_reply or not cleaned_text:
         return
@@ -246,9 +239,19 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
+async def post_init(application: Application):
+    """Функция, вызываемая после инициализации бота"""
+    global bot_username
+    bot_username = application.bot.username
+    logger.info(f"✅ Бот инициализирован. Username: @{bot_username}")
+
 # --- Запуск ---
 def main():
+    # Создаем приложение
     app = Application.builder().token(TOKEN).build()
+    
+    # Устанавливаем обработчик post_init
+    app.post_init = post_init
     
     # Команды
     app.add_handler(CommandHandler("start", start))
@@ -263,8 +266,7 @@ def main():
     # Обработчик ошибок
     app.add_error_handler(error_handler)
     
-    logger.info("🚀 Бот Секон запущен!")
-    logger.info(f"Username бота: @{app.bot.username}")
+    logger.info("🚀 Запускаю бота Секон...")
     
     # Запускаем
     app.run_polling(
