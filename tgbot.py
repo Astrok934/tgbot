@@ -70,7 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
         "🤖 Привет! Я теперь на DeepSeek — мощный и бесплатный ИИ!\n"
         "• В личных сообщениях отвечаю на всё\n"
-        "• В группах используй «Хайку, вопрос»\n"
+        "• В группах используй «Секон, вопрос»\n"
         "• /time — время по МСК\n"
         "• /clear — очистить историю диалога"
     )
@@ -95,7 +95,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # В группах реагируем только на триггер "Хайку,"
     if message.chat.type != "private":
-        if not user_text.lower().startswith(('хайку,', 'хайку ')):
+        if not user_text.lower().startswith(('секон,', 'секон ')):
             return
         user_text = user_text.split(maxsplit=1)[1] if ' ' in user_text else user_text.split(',', 1)[1].strip()
     
@@ -123,4 +123,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
