@@ -14,68 +14,79 @@ logger = logging.getLogger(__name__)
 
 # Токены (берутся из переменных окружения Railway)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Заменили OPENROUTER
 
-if not TOKEN or not OPENROUTER_API_KEY:
-    raise ValueError("Проверьте TELEGRAM_TOKEN и OPENROUTER_API_KEY в настройках Railway!")
+if not TOKEN or not DEEPSEEK_API_KEY:
+    raise ValueError("Проверьте TELEGRAM_TOKEN и DEEPSEEK_API_KEY в настройках Railway!")
 
 # --- Глобальные переменные ---
-user_histories = {}  # Хранилище истории диалогов
+user_histories = {}
 
 # --- Вспомогательные функции ---
 def get_moscow_time() -> str:
-    """Возвращает время по МСК (UTC+3)"""
     return (datetime.utcnow() + timedelta(hours=3)).strftime("%H:%M")
 
 async def get_ai_response(user_id: int, text: str) -> str:
-    """Запрос к ИИ через OpenRouter с историей диалога"""
+    """Запрос к DeepSeek API"""
     history = user_histories.get(user_id, [{
         "role": "system",
-        "content": "Ты Хайку — крутой помощник. общаешься как хороший тип. умеешь матюкаться(уместно). разговариваешь АБСОЛЮТНО на любые темы"
+        "content": "Ты Хайку — крутой помощник. Общаешься как хороший тип. Умеешь матюкаться уместно. Разговариваешь АБСОЛЮТНО на любые темы"
     }])
     
     history.append({"role": "user", "content": text})
     
     try:
         response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            "https://api.deepseek.com/chat/completions",  # DeepSeek endpoint
             headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "HTTP-Referer": "https://github.com/Astrok934/tgbot",  # Укажите ваш репозиторий
-                "X-Title": "Telegram Bot"
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
             },
             json={
-                "model": "anthropic/claude-3-haiku",
-                "messages": history[-6:]  # Последние 6 сообщений
+                "model": "deepseek-chat",  # или "deepseek-coder" если нужно для кода
+                "messages": history[-10:],  # Более длинный контекст
+                "max_tokens": 1024,
+                "temperature": 0.7,
+                "stream": False
             },
-            timeout=10
+            timeout=20
         )
         response.raise_for_status()
-        reply = response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        reply = data["choices"][0]["message"]["content"]
+        
         history.append({"role": "assistant", "content": reply})
-        user_histories[user_id] = history[-6:]  # Ограничиваем историю
+        user_histories[user_id] = history[-10:]  # Храним больше истории
         return reply
-    except Exception as e:
-        logger.error(f"Ошибка OpenRouter: {str(e)}")
-        return "⚠️ Ошибка генерации ответа"
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Ошибка API: {str(e)}")
+        return "⚠️ Ошибка подключения к ИИ"
+    except KeyError as e:
+        logger.error(f"Ошибка в ответе API: {str(e)} - {response.text}")
+        return "⚠️ Неожиданный ответ от ИИ"
 
-# --- Обработчики команд ---
+# --- Обработчики команд (остаются те же) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик /start"""
     help_text = (
-        "🦊 Привет! Я Хайку — твой ИИ-помощник.\n"
+        "🤖 Привет! Я теперь на DeepSeek — мощный и бесплатный ИИ!\n"
         "• В личных сообщениях отвечаю на всё\n"
         "• В группах используй «Хайку, вопрос»\n"
-        "• /time — время по МСК"
+        "• /time — время по МСК\n"
+        "• /clear — очистить историю диалога"
     )
     await update.message.reply_text(help_text)
 
 async def time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик /time"""
     await update.message.reply_text(f"⏰ Москва: {get_moscow_time()}")
 
+async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Новая команда для очистки истории"""
+    user_id = update.effective_user.id
+    if user_id in user_histories:
+        del user_histories[user_id]
+    await update.message.reply_text("🗑️ История диалога очищена!")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка текстовых сообщений"""
     if not update.message or not update.message.text:
         return
 
@@ -88,12 +99,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         user_text = user_text.split(maxsplit=1)[1] if ' ' in user_text else user_text.split(',', 1)[1].strip()
     
+    # Показываем статус "печатает..."
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
     try:
         response = await get_ai_response(update.effective_user.id, user_text)
         await message.reply_text(response)
     except Exception as e:
         logger.error(f"Ошибка обработки: {str(e)}")
-        await message.reply_text("🔧 Произошла ошибка. Попробуйте позже.")
+        await message.reply_text("🔧 Что-то пошло не так. Попробуй еще раз.")
 
 # --- Запуск ---
 def main():
@@ -101,11 +115,11 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("time", time))
+    app.add_handler(CommandHandler("clear", clear))  # Новая команда
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Бот запущен и готов к работе!")
+    logger.info("Бот с DeepSeek запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
