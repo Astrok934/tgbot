@@ -30,7 +30,7 @@ async def get_ai_response(user_id: int, text: str) -> str:
     """Запрос к DeepSeek API"""
     history = user_histories.get(user_id, [{
         "role": "system",
-        "content": "Ты Хайку — крутой помощник. Общаешься как хороший тип. Умеешь матюкаться уместно. Разговариваешь АБСОЛЮТНО на любые темы"
+        "content": "Ты Секон, хороший тип и крутой. общаешься на любые темы"
     }])
     
     history.append({"role": "user", "content": text})
@@ -123,3 +123,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
